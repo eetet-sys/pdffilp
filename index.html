@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>나만의 플립북 만들기</title>
+<style>
+    /* 배경 스타일: 나무 책상 느낌 */
+    body {
+        background: #333;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+        overflow: hidden;
+    }
+
+    /* 플립북 전체 크기 설정 */
+    #flipbook {
+        width: 800px;
+        height: 500px;
+    }
+
+    /* 각 페이지의 공통 스타일 */
+    #flipbook .page {
+        width: 400px;
+        height: 500px;
+        background-color: white;
+        font-family: 'Arial', sans-serif;
+        font-size: 20px;
+        text-align: center;
+        line-height: 500px; /* 글자 수직 중앙 정렬 */
+        box-shadow: inset -5px 0 10px rgba(0,0,0,0.1); /* 안쪽 그림자 */
+        border: 1px solid #ccc;
+    }
+
+    /* 표지(Hard Cover) 스타일 - 딱딱한 느낌 */
+    #flipbook .hard {
+        background: #2c3e50; /* 진한 남색 */
+        color: white;
+        font-weight: bold;
+        border: 2px solid #1a252f;
+    }
+
+    /* 짝수 페이지(왼쪽)와 홀수 페이지(오른쪽) 구분 */
+    #flipbook .odd { background: #ecf0f1; } /* 밝은 회색 */
+    #flipbook .even { background: #fff; }    /* 흰색 */
+</style>
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/turn.js/4.1.0/turn.min.js"></script>
+</head>
+<body>
+
+<div id="flipbook">
+    <div class="page hard">나의 첫 플립북<br>(표지)</div>
+    
+    <div class="page odd" style="background:pink;">1페이지<br>(마우스로 모서리를 잡으세요)</div>
+    <div class="page even" style="background:lightblue;">2페이지<br>(스르륵 넘어갑니다)</div>
+    <div class="page odd" style="background:lightyellow;">3페이지</div>
+    <div class="page even" style="background:lightgreen;">4페이지</div>
+    <div class="page odd">5페이지<br>내용을 넣을 수 있어요</div>
+    <div class="page even">6페이지</div>
+
+    <div class="page hard">THE END<br>(뒷표지)</div>
+</div>
+
+<script>
+    $("#flipbook").turn({
+        width: 800,        // 책 전체 너비 (펼쳤을 때)
+        height: 500,       // 책 높이
+        autoCenter: true,  // 화면 중앙 정렬
+        duration: 1000,    // 넘어가는 속도 (1초)
+        gradients: true,   // 그림자 효과 켜기
+        acceleration: true // 하드웨어 가속 (부드럽게)
+    });
+</script>
+
+</body>
+</html>
