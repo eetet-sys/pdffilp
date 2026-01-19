@@ -18,7 +18,14 @@
         
         #book-container { flex: 1; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; z-index: 1; background-color: var(--bg-color); }
         
-        .stf__wrapper { box-shadow: 0 5px 20px rgba(0,0,0,0.5); }
+        /* [중요] 캔버스가 찌그러지지 않도록 CSS 강제 적용 */
+        .stf__block canvas {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+        }
+
+        .stf__wrapper { box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
         
         #ui-controls { position: fixed; bottom: 0; left: 0; width: 100%; background: var(--ui-bg); padding: 15px 20px calc(15px + env(safe-area-inset-bottom)) 20px; display: flex; flex-direction: column; gap: 10px; z-index: 10; transition: transform 0.3s ease; box-sizing: border-box; border-top: 1px solid #444; backdrop-filter: blur(10px); }
         #ui-controls.hidden { transform: translateY(100%); }
@@ -41,12 +48,13 @@
         #zoom-img { max-width: 100%; max-height: 100%; object-fit: contain; }
         #zoom-close-btn { position: absolute; top: 20px; right: 20px; background: rgba(50,50,50,0.8); color: white; border: 1px solid #777; width: 40px; height: 40px; border-radius: 50%; font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 1000; }
         
+        /* 버튼 그룹 */
         .top-btn-group { position: absolute; top: 10px; right: 10px; z-index: 50; display: none; gap: 8px; flex-wrap: wrap; justify-content: flex-end;}
         .top-btn { border: none; color: white; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
         #btn-export { background: #6f42c1; } 
         #btn-reset { background: #ff4444; }
-        /* 내보낸 파일에서만 보일 버튼 스타일 미리 정의 */
-        #btn-view-mode { background: #28a745; }
+        /* 공유 파일에서만 보이는 버튼 */
+        #btn-view-mode { background: #28a745; } 
     </style>
 </head>
 <body>
@@ -108,8 +116,7 @@
         };
 
         let allPages=[], pageFlip, totalPages=0, currentPDFData=null, zoomInstance=null, lastTap=0, pdfOriginalRatio=0.7;
-        
-        // 메인 앱에서는 항상 'auto' 모드로 동작 (변수 없음)
+        let viewMode = 'auto'; 
 
         window.addEventListener('DOMContentLoaded', async () => {
             const saved = await loadFileFromDB();
@@ -156,6 +163,7 @@
                 const fragment = document.createDocumentFragment();
                 const firstPage = await pdfDoc.getPage(1);
                 const firstViewport = firstPage.getViewport({ scale: 1.0 });
+                // 단일 페이지 기준 비율 계산
                 pdfOriginalRatio = (firstViewport.width > firstViewport.height * 1.1) ? (firstViewport.width / 2) / firstViewport.height : firstViewport.width / firstViewport.height;
 
                 for (let i = 1; i <= pdfDoc.numPages; i++) {
@@ -194,36 +202,52 @@
             return [l,r];
         }
 
-        // [메인 앱용] 자동 반응형 로직만 존재 (버튼 없음)
+        // [핵심] 비율 깨짐 방지 계산 로직
         function initFlipBook() {
             const isLandscape = window.innerWidth > window.innerHeight;
             
-            // 여백 계산 (모바일 겹침 방지)
-            const paddingX = isLandscape ? 40 : 0;
-            const paddingY = isLandscape ? 40 : 10;
+            let targetMode = isLandscape ? 'double' : 'single';
+            if (viewMode === 'single') targetMode = 'single';
+            if (viewMode === 'double') targetMode = 'double';
+
+            const isDouble = (targetMode === 'double');
+            
+            // 여백
+            const paddingX = isDouble ? 60 : 0;
+            const paddingY = isDouble ? 60 : 10;
+            
             const containerW = els.bookContainer.clientWidth - paddingX;
             const containerH = els.bookContainer.clientHeight - paddingY;
 
             let bookH = containerH;
             let bookW = 0;
 
-            if (isLandscape) {
-                // 가로모드 = 두 쪽 보기
-                bookW = (bookH * pdfOriginalRatio) * 2;
-                if (bookW > containerW) { bookW = containerW; bookH = (bookW / 2) / pdfOriginalRatio; }
-            } else {
-                // 세로모드 = 한 쪽 보기
-                bookW = containerW; 
-                bookH = bookW / pdfOriginalRatio;
-                if (bookH > containerH) { bookH = containerH; bookW = bookH * pdfOriginalRatio; }
+            // [비율 계산 핵심]
+            // 목표 비율(Target Ratio) = (1쪽 비율) * (쪽수)
+            // 2쪽 보기면 2배 넓어져야 함.
+            const targetRatio = isDouble ? (pdfOriginalRatio * 2) : pdfOriginalRatio;
+
+            // 1. 높이를 기준으로 너비 계산 (기본)
+            bookW = bookH * targetRatio;
+
+            // 2. 만약 계산된 너비가 컨테이너보다 크다면? -> 너비를 기준으로 높이 재조정
+            if (bookW > containerW) {
+                bookW = containerW;
+                bookH = bookW / targetRatio;
             }
 
-            bookW = Math.floor(bookW); bookH = Math.floor(bookH);
+            // 소수점 제거 (렌더링 오차 방지)
+            bookW = Math.floor(bookW); 
+            bookH = Math.floor(bookH);
 
             pageFlip = new St.PageFlip(els.flipbook, {
-                width: bookW, height: bookH, size: 'fixed',
-                usePortrait: !isLandscape, // 가로=false(2쪽), 세로=true(1쪽)
-                maxShadowOpacity: 0.5, autoSize: true, showCover: true
+                width: bookW, 
+                height: bookH, 
+                size: 'fixed', // 고정 크기 모드 사용 (비율 유지 필수)
+                usePortrait: !isDouble,
+                maxShadowOpacity: 0.5, 
+                autoSize: true, // 캔버스를 bookW, bookH에 맞춤
+                showCover: true
             });
 
             pageFlip.loadFromHTML(allPages);
@@ -280,7 +304,7 @@
         });
 
         // --------------------------------------------------------
-        // [내보내기용 HTML 생성 함수] - 여기에만 보기 모드 버튼과 로직이 들어감
+        // [내보내기용 HTML 생성 함수] - 여기에만 보기모드 버튼 포함
         // --------------------------------------------------------
         function downloadPortableHTML(base64Data) {
             const htmlContent = `<!DOCTYPE html>
@@ -315,22 +339,23 @@ window.addEventListener('DOMContentLoaded', ()=>{
  for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i);
  loadPDF(bytes.buffer);
 });
+// 뷰어 로직 (동일함 + 보기모드 추가)
 const els={loading:document.getElementById('loading'),bookContainer:document.getElementById('book-container'),flipbook:document.getElementById('flipbook'),ui:document.getElementById('ui-controls'),slider:document.getElementById('page-slider'),pageInfo:document.getElementById('page-info'),btnFullscreen:document.getElementById('btn-fullscreen'),zoomLayer:document.getElementById('zoom-layer'),zoomImg:document.getElementById('zoom-img'),zoomClose:document.getElementById('zoom-close-btn'),btnViewMode:document.getElementById('btn-view-mode')};
 let allPages=[],pageFlip,totalPages=0,lastTap=0,zoomInstance=null,pdfOriginalRatio=0.7,viewMode='auto';
 function splitCanvas(o){const w=o.width,h=o.height,hw=Math.floor(w/2);const l=document.createElement('canvas'),r=document.createElement('canvas');l.width=hw;l.height=h;r.width=hw;r.height=h;l.getContext('2d').drawImage(o,0,0,hw,h,0,0,hw,h);r.getContext('2d').drawImage(o,hw,0,hw,h,0,0,hw,h);return[l,r];}
 async function loadPDF(d){try{const pdf=await pdfjsLib.getDocument(d).promise;const frag=document.createDocumentFragment();const p1=await pdf.getPage(1);const v1=p1.getViewport({scale:1.0});pdfOriginalRatio=(v1.width>v1.height*1.1)?(v1.width/2)/v1.height:v1.width/v1.height;for(let i=1;i<=pdf.numPages;i++){const p=await pdf.getPage(i);const v=p.getViewport({scale:2.0});const c=document.createElement('canvas');c.width=v.width;c.height=v.height;await p.render({canvasContext:c.getContext('2d'),viewport:v}).promise;if(v.width>v.height*1.1){const[l,r]=splitCanvas(c);l.classList.add('page-canvas');r.classList.add('page-canvas');l.dataset.pdfIdx=i;r.dataset.pdfIdx=i;allPages.push(l);allPages.push(r);frag.appendChild(l);frag.appendChild(r);}else{c.classList.add('page-canvas');c.dataset.pdfIdx=i;allPages.push(c);frag.appendChild(c);}els.loading.innerText='변환 중... ('+i+'/'+pdf.numPages+')';}els.flipbook.appendChild(frag);els.loading.style.display='none';initFlipBook();}catch(e){alert('Err: '+e.message);}}
-// [내보낸 파일용] 버튼 이벤트
 els.btnViewMode.addEventListener('click',()=>{if(viewMode==='auto'){viewMode='single';els.btnViewMode.innerText='👁️ 보기: 1쪽';}else if(viewMode==='single'){viewMode='double';els.btnViewMode.innerText='👁️ 보기: 2쪽';}else{viewMode='auto';els.btnViewMode.innerText='👁️ 보기: 자동';}reloadFlipBook();});
 function initFlipBook(){
  const isLand=window.innerWidth>window.innerHeight;
  let targetMode=isLand?'double':'single';
  if(viewMode==='single') targetMode='single'; if(viewMode==='double') targetMode='double';
  const isDouble=(targetMode==='double');
- const pX=isDouble?40:0, pY=isDouble?40:10;
+ const pX=isDouble?60:0, pY=isDouble?60:10;
  const cW=els.bookContainer.clientWidth-pX, cH=els.bookContainer.clientHeight-pY;
  let bH=cH, bW=0;
- if(isDouble){ bW=(bH*pdfOriginalRatio)*2; if(bW>cW){ bW=cW; bH=(bW/2)/pdfOriginalRatio; } }
- else{ bW=cW; bH=bW/pdfOriginalRatio; if(bH>cH){ bH=cH; bW=bH*pdfOriginalRatio; } }
+ const targetRatio = isDouble ? (pdfOriginalRatio * 2) : pdfOriginalRatio;
+ bW = bH * targetRatio;
+ if(bW > cW) { bW = cW; bH = bW / targetRatio; }
  bW=Math.floor(bW); bH=Math.floor(bH);
  pageFlip=new St.PageFlip(els.flipbook,{width:bW,height:bH,size:'fixed',usePortrait:!isDouble,maxShadowOpacity:0.5,autoSize:true,showCover:true});
  pageFlip.loadFromHTML(allPages); totalPages=pageFlip.getPageCount(); els.slider.max=totalPages-1;
