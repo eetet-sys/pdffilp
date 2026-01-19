@@ -38,9 +38,8 @@
         /* 상단 버튼 그룹 */
         .top-btn-group { position: absolute; top: 10px; right: 10px; z-index: 101; display: none; gap: 10px; }
         .top-btn { border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
-        #btn-export { background: #6f42c1; } /* 보라색: 이북 생성 */
+        #btn-export { background: #6f42c1; } 
         #btn-reset { background: #ff4444; } 
-
     </style>
 </head>
 <body>
@@ -79,8 +78,43 @@
     </div>
 
     <script>
+        // === [PWA] 서비스 워커 등록 (옵션) ===
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW Fail:', err));
+        }
+
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+        // === [DB] IndexedDB 설정 ===
+        const DB_NAME = "EbookDB"; const STORE_NAME = "files";
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, 1);
+                request.onupgradeneeded = (e) => e.target.result.createObjectStore(STORE_NAME);
+                request.onsuccess = (e) => resolve(e.target.result);
+                request.onerror = (e) => reject(e);
+            });
+        }
+        async function saveFileToDB(fileData) {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, "readwrite");
+            tx.objectStore(STORE_NAME).put(fileData, "currentBook");
+            return new Promise((resolve) => tx.oncomplete = resolve);
+        }
+        async function loadFileFromDB() {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, "readonly");
+            const req = tx.objectStore(STORE_NAME).get("currentBook");
+            return new Promise((resolve) => { req.onsuccess = () => resolve(req.result); });
+        }
+        async function clearDB() {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, "readwrite");
+            tx.objectStore(STORE_NAME).delete("currentBook");
+            return new Promise((resolve) => tx.oncomplete = resolve);
+        }
+
+        // === [Main] ===
         const els = {
             fileInput: document.getElementById('file-input'),
             startScreen: document.getElementById('start-screen'),
@@ -100,51 +134,85 @@
         };
 
         let allPages = [], pageFlip, totalPages = 0, pdfDoc = null, zoomInstance = null, lastTap = 0, pdfOriginalRatio = 0.7;
-        let currentPDFData = null; // 현재 PDF 바이너리 저장용
+        let currentPDFData = null; // 원본 데이터 보관용
 
-        // 1. 파일 선택
+        // 1. [수정됨] 앱 시작 시 DB 로드
+        window.addEventListener('DOMContentLoaded', async () => {
+            const savedData = await loadFileFromDB();
+            if (savedData) {
+                // [중요] DB에서 불러온 데이터를 변수에 저장
+                currentPDFData = savedData; 
+                
+                els.startScreen.style.display = 'none';
+                els.loading.style.display = 'block';
+                els.topButtons.style.display = 'flex';
+                
+                // [중요] 뷰어에는 '복사본'을 넘겨서 원본(currentPDFData)이 손상되지 않게 함
+                await loadPDF(savedData.slice(0)); 
+            }
+        });
+
+        // 2. [수정됨] 파일 선택 시 처리
         els.fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
             const data = await file.arrayBuffer();
-            currentPDFData = data; // 데이터 보관
             
+            // [중요] 원본 보관 (DB 저장 및 내보내기용)
+            currentPDFData = data; 
+            await saveFileToDB(data);
+
             els.startScreen.style.display = 'none';
             els.loading.style.display = 'block';
             els.topButtons.style.display = 'flex';
-            await loadPDF(data);
+            
+            // [중요] 뷰어에는 복사본 전달
+            await loadPDF(data.slice(0)); 
         });
 
-        // 2. 초기화 버튼
-        els.btnReset.addEventListener('click', () => location.reload());
+        els.btnReset.addEventListener('click', async () => {
+            if(confirm("초기화하시겠습니까?")) {
+                await clearDB();
+                location.reload();
+            }
+        });
 
-        // 3. [핵심] 이북 파일 생성 (HTML 안에 PDF 심기)
+        // 3. 이북 파일 생성 (안전장치 추가)
         els.btnExport.addEventListener('click', () => {
-            if (!currentPDFData) return alert("변환할 PDF가 없습니다.");
-            els.loading.style.display = 'block';
-            els.loading.innerText = "이북 파일 생성 중... (잠시만 기다리세요)";
+            // 데이터 존재 여부 및 크기(0바이트인지) 확인
+            if (!currentPDFData || currentPDFData.byteLength === 0) {
+                alert("내보낼 PDF 데이터가 없습니다. 파일을 다시 열어주세요.");
+                return;
+            }
 
-            // 약간의 딜레이를 주어 로딩 화면이 보이게 함
+            els.loading.style.display = 'block';
+            els.loading.innerText = "이북 파일 생성 중... (파일 크기에 따라 시간이 걸릴 수 있습니다)";
+
             setTimeout(async () => {
-                const base64PDF = await arrayBufferToBase64(currentPDFData);
-                downloadPortableHTML(base64PDF);
+                try {
+                    const base64PDF = await arrayBufferToBase64(currentPDFData);
+                    downloadPortableHTML(base64PDF);
+                } catch(e) {
+                    alert("생성 실패: " + e.message);
+                }
                 els.loading.style.display = 'none';
             }, 100);
         });
 
-        // ArrayBuffer -> Base64 변환 함수
         function arrayBufferToBase64(buffer) {
-            return new Promise((resolve) => {
+            return new Promise((resolve, reject) => {
                 const blob = new Blob([buffer], { type: 'application/pdf' });
                 const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.onloadend = () => {
+                    if(reader.result) resolve(reader.result.split(',')[1]);
+                    else reject(new Error("변환 실패"));
+                };
                 reader.readAsDataURL(blob);
             });
         }
 
-        // 휴대용 HTML 파일 생성 및 다운로드
+        // 휴대용 HTML 파일 생성 및 다운로드 함수
         function downloadPortableHTML(base64Data) {
-            // 현재 페이지의 모든 소스 코드를 가져오되, PDF 데이터를 주입하여 재구성
             const htmlContent = `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -156,8 +224,8 @@
     <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"><\/script>
     <style>
         ${document.querySelector('style').innerHTML}
-        #start-screen { display: none !important; } /* 시작 화면 숨김 */
-        .top-btn-group { display: none !important; } /* 버튼 숨김 */
+        #start-screen { display: none !important; }
+        .top-btn-group { display: none !important; }
     </style>
 </head>
 <body>
@@ -175,14 +243,11 @@
         <div id="zoom-container"><img id="zoom-img" src=""></div>
     </div>
     <script>
-        // === [내장된 PDF 데이터] ===
         const embeddedPDF = "${base64Data}";
-        
-        // 라이브러리 설정
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-        // 메인 로직 시작
         window.addEventListener('DOMContentLoaded', () => {
+            if(!embeddedPDF) { alert("PDF 데이터가 비어있습니다."); return; }
             const pdfData = base64ToArrayBuffer(embeddedPDF);
             loadPDF(pdfData);
         });
@@ -195,7 +260,6 @@
             return bytes.buffer;
         }
 
-        // === 뷰어 로직 (복사됨) ===
         const els = {
             loading: document.getElementById('loading'),
             bookContainer: document.getElementById('book-container'),
